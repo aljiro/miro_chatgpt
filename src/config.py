@@ -1,1 +1,1 @@
-API_KEY = "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"
+API_KEY = lambda x: "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" if x =="aung" else ("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" if x == "aljiro" else x)
