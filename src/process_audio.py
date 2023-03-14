@@ -4,7 +4,7 @@ import os
 import rospy # ROS Python interface
 from std_msgs.msg import Int16MultiArray # ROS message for mics
 
-SAMPLE_COUNT = 1000
+SAMPLE_COUNT = 640
 
 class ProcessAudio(object):
 
