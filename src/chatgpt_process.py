@@ -28,7 +28,7 @@ class ChatGPTNode:
                     self.system_message,
                     {"role": "user", "content": msg.data}
                 ]
-        )
+        )# TO_DO: Concatenate all the previous messages
 
         reply = chat['choices'][0]['message']['content']
         rmsg = std_msgs.msg.String()
@@ -38,7 +38,7 @@ class ChatGPTNode:
 
 
     def loop(self):
-        rate = rospy.Rate(1)
+        rate = rospy.Rate(10)
 
         while not rospy.core.is_shutdown():
             rate.sleep()
