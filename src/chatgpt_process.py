@@ -11,7 +11,7 @@ class ChatGPTNode:
         rospy.init_node("chatgpt_process", anonymous=True)
         topic_base_name = "/" + os.getenv("MIRO_ROBOT_NAME")
         self.model = "gpt-3.5-turbo"
-        self.system_message = {"role": "system", "content": "You are a helpful assistant."}
+        self.system_message = {"role": "system", "content": "You are a friendly robot called Miro."}
 
         # Prompt subscriber
         self.sub_prompt = rospy.Subscriber(topic_base_name + "/text_prompt",
