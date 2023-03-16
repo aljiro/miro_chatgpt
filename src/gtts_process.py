@@ -13,7 +13,7 @@ class gTTSNode:
         rospy.init_node("gTTS_process", anonymous=True)
         topic_base_name = "/" + os.getenv("MIRO_ROBOT_NAME")
         # Prompt subscriber
-        self.sub_prompt = rospy.Subscriber(topic_base_name + "/prompt_response",
+        self.sub_prompt = rospy.Subscriber(topic_base_name + "/gpt_speech/prompt_response",
                           std_msgs.msg.String, self.response_callback, queue_size=1, tcp_nodelay=True)
         # Control
         self.pub_stream = rospy.Publisher(topic_base_name + "/control/stream", Int16MultiArray, queue_size=0)
@@ -42,7 +42,7 @@ class gTTSNode:
         dat = np.fromstring(dat, dtype='int16').astype(np.int32)
 
         # normalise wav
-        dat = dat.astype(np.float)
+        dat = dat.astype(float)
         sc = 32767.0 / np.max(np.abs(dat))
         dat *= sc
         dat = dat.astype(np.int16).tolist()

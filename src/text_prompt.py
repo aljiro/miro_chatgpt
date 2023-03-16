@@ -2,7 +2,7 @@
 import rospy, os
 import openai, config
 
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 
 SAMPLE_COUNT = 640
 
@@ -18,6 +18,10 @@ class TextPrompt():
         self.subscriber = rospy.Subscriber(
             self.topic_base_name + "/gpt_speech/process_whisper", Bool, self.check_cb, tcp_nodelay=True
         )
+        self.publisher = rospy.Publisher(
+            self.topic_base_name + "/gpt_speech/text_prompt", String, queue_size=0
+        )
+        self.message = String()
         self.process_whisper = False
 
     def check_cb(self, msg):
@@ -27,12 +31,14 @@ class TextPrompt():
         outfilename = 'audio_files/testing.wav'
         while not rospy.core.is_shutdown():
             if os.path.exists(outfilename) and self.process_whisper is True:
-                rospy.sleep(1)
+                rospy.sleep(0.5)
                 audio_file= open(outfilename, "rb")
                 transcript = openai.Audio.transcribe("whisper-1", audio_file)
-                print(transcript)
+                self.message.data = transcript.text
+                print(self.message.data)
+                self.publisher.publish(self.message.data)
                 os.remove(outfilename)
-                rospy.sleep(1)
+                rospy.sleep(0.5)
 
 if __name__ == "__main__":
     main = TextPrompt()

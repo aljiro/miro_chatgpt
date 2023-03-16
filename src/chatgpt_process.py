@@ -14,10 +14,10 @@ class ChatGPTNode:
         self.system_message = {"role": "system", "content": "You are a friendly robot called Miro."}
 
         # Prompt subscriber
-        self.sub_prompt = rospy.Subscriber(topic_base_name + "/text_prompt",
+        self.sub_prompt = rospy.Subscriber(topic_base_name + "/gpt_speech/text_prompt",
                           std_msgs.msg.String, self.prompt_callback, queue_size=1, tcp_nodelay=True)
         # Response publisher
-        self.pub_response = rospy.Publisher(topic_base_name + "/prompt_response", std_msgs.msg.String, queue_size=0)
+        self.pub_response = rospy.Publisher(topic_base_name + "/gpt_speech/prompt_response", std_msgs.msg.String, queue_size=0)
                                 
 
     def prompt_callback( self, msg ):
