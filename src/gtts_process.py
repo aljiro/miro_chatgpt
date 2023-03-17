@@ -57,10 +57,14 @@ class gTTSNode:
         rate = rospy.Rate(10)
         self.d = 0
         while not rospy.core.is_shutdown():
+            outfilename = 'audio_files/testing.wav'
             if self.d < len(self.data):
                 msg = Int16MultiArray(data = self.data[self.d:self.d + 1000])
                 self.d += 1000
                 self.pub_stream.publish(msg)
+                if os.path.exists(outfilename):
+                    rospy.sleep(2)
+                    os.remove(outfilename)
             rate.sleep()
 
 if __name__ == "__main__":    

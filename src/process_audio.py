@@ -4,9 +4,13 @@ import os
 import rospy # ROS Python interface
 from std_msgs.msg import Int16MultiArray # ROS message for mics
 from std_msgs.msg import Bool
+import matplotlib.pyplot as plt
+
+# testing purposes
+import wave, struct
 
 SAMPLE_COUNT = 640
-SAMPLING_TIME = 5 # in terms of seconds
+SAMPLING_TIME = 29 # in terms of seconds
 
 class ProcessAudio(object):
 
@@ -21,19 +25,30 @@ class ProcessAudio(object):
         self.subscriber = rospy.Subscriber(
             self.topic_base_name + "/sensors/mics", Int16MultiArray, self.audio_cb, tcp_nodelay=True
         )
-        self.audio_publisher = rospy.Publisher(
-            self.topic_base_name + "/gpt_speech/process_speech", Int16MultiArray, queue_size=0
-        )
-        self.check_publisher = rospy.Publisher(
-            self.topic_base_name + "/gpt_speech/check_speech", Bool, queue_size=0
-        )
+        # self.audio_publisher = rospy.Publisher(
+        #     self.topic_base_name + "/gpt_speech/process_speech", Int16MultiArray, queue_size=0
+        # )
+        # self.check_publisher = rospy.Publisher(
+        #     self.topic_base_name + "/gpt_speech/check_speech", Bool, queue_size=0
+        # )
         self.audio_store = Int16MultiArray()
         self.check_audio = Bool()
 
         # processed sound
         self.detected_sound = np.zeros((0,1), 'uint16')
+        self.zcr_frame = np.zeros((0,1), 'uint16')
+        self.to_transcribe = np.zeros((0,1), 'uint16')
         self.start_processing = False   # check whether a new audio sample is to be processed
+        self.record = False
+        self.stop_record = 0
+        self.processing = False
 
+    def calc_ZCR(self, signal):
+        ZCR = 0
+        for k in range(1, len(signal)):
+            ZCR += 0.5 * abs(np.sign(signal[k]) - np.sign(signal[k - 1]))
+        return ZCR
+    
     def audio_cb(self, msg):
 		# reshape into 4 x 500 array
         data = np.asarray(msg.data)
@@ -66,17 +81,57 @@ class ProcessAudio(object):
                 outbuf = np.reshape(outbuf[:, [0]], (-1))
                 self.startCheck = False
                 self.detected_sound = np.append(self.detected_sound, outbuf)
+                self.zcr_frame = np.append(self.zcr_frame, outbuf)
+
+            if len(self.zcr_frame) >= 10000:
+                zcr_value = self.calc_ZCR(self.zcr_frame)
+                self.zcr_frame = np.zeros((0,1), 'uint16')
+                if zcr_value >= 100 and zcr_value <= 1000:
+                    self.record = True
+                    self.stop_record = 0
+                    print("RECORDING NOW")
+                else:
+                    self.stop_record += 1
             
+            # reset if false
+            if (self.record == False) and (len(self.detected_sound) > 10000):
+                self.detected_sound = self.detected_sound[len(self.detected_sound) - 10000:len(self.detected_sound)]
+
             # renew data
-            if len(self.detected_sound) >= 20000 * SAMPLING_TIME:
-                self.audio_store.data = self.detected_sound
-                self.detected_sound = np.zeros((0,1), 'uint16')
-                print(self.start_processing)
+            if ((len(self.detected_sound) >= (20000 * SAMPLING_TIME)) or (self.stop_record >= 4)) and (self.record == True):
+                if self.processing == False:
+                    self.to_transcribe = self.detected_sound
+                    self.processing = True
                 self.check_audio.data = True
-            self.audio_publisher.publish(self.audio_store)
-            self.check_publisher.publish(self.check_audio)
+
+                # testing
+                self.record = False
+                self.detected_sound = np.zeros((0,1), 'uint16')
+
+            # self.check_publisher.publish(self.check_audio)
+            
+    def record_audio(self):
+        outfilename = 'audio_files/testing.wav'
+        if self.processing is True and (not os.path.exists(outfilename)):
+        # if self.processing is True:
+            # self.audio_store.data = self.to_transcribe
+            # self.audio_publisher.publish(self.audio_store)
+            # print("SENDING")
+            
+            outfilename = 'audio_files/testing.wav'
+            file = wave.open(outfilename, 'wb')
+            file.setframerate(20000)
+            file.setsampwidth(2)
+            print("Starting to write/re-write new audio file of sample length " + str(len(self.to_transcribe)))
+            file.setnchannels(1)
+            for s in self.to_transcribe:
+                file.writeframes(struct.pack('<h', s))
+            file.close()
+            print("DONE")
+            self.processing = False
 
 if __name__ == "__main__":
     main = ProcessAudio()
+    i = 0
     while not rospy.core.is_shutdown():
-        print(main.check_audio.data)
+        main.record_audio()
