@@ -15,14 +15,14 @@ class TextPrompt():
         # init node
         rospy.init_node("text_prompt")
         self.topic_base_name = "/" + os.getenv("MIRO_ROBOT_NAME")
-        # self.subscriber = rospy.Subscriber(
-        #     self.topic_base_name + "/gpt_speech/process_whisper", Bool, self.check_cb, tcp_nodelay=True
-        # )
+        self.subscriber = rospy.Subscriber(
+            self.topic_base_name + "/gpt_speech/process_whisper", Bool, self.check_cb, tcp_nodelay=True
+        )
         self.publisher = rospy.Publisher(
             self.topic_base_name + "/gpt_speech/text_prompt", String, queue_size=0
         )
         self.message = String()
-        # self.process_whisper = False
+        self.process_whisper = False
         self.read = 0
 
     def check_cb(self, msg):
@@ -37,8 +37,8 @@ class TextPrompt():
             else:
                 self.read += 1
                 
-            if self.read == 1:
-                if os.path.exists(outfilename):
+            if self.read >= 1:
+                if os.path.exists(outfilename) and self.process_whisper == True:
                     rospy.sleep(0.5)
                     audio_file= open(outfilename, "rb")
                     transcript = openai.Audio.transcribe("whisper-1", audio_file)
@@ -46,7 +46,7 @@ class TextPrompt():
                     print(self.message.data)
                     self.publisher.publish(self.message.data)
                     self.read += 1
-                # os.remove(outfilename)
+                    os.remove(outfilename)
 
 if __name__ == "__main__":
     main = TextPrompt()

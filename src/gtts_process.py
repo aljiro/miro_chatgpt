@@ -2,7 +2,7 @@ from gtts import gTTS
 import rospy
 import os
 import std_msgs.msg
-from std_msgs.msg import UInt8MultiArray, UInt16MultiArray, Int16MultiArray
+from std_msgs.msg import Int16MultiArray
 from io import BytesIO
 from pydub import AudioSegment
 import numpy as np
@@ -57,14 +57,10 @@ class gTTSNode:
         rate = rospy.Rate(10)
         self.d = 0
         while not rospy.core.is_shutdown():
-            outfilename = 'audio_files/testing.wav'
             if self.d < len(self.data):
                 msg = Int16MultiArray(data = self.data[self.d:self.d + 1000])
                 self.d += 1000
                 self.pub_stream.publish(msg)
-                if os.path.exists(outfilename):
-                    rospy.sleep(2)
-                    os.remove(outfilename)
             rate.sleep()
 
 if __name__ == "__main__":    

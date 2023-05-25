@@ -2,9 +2,9 @@
 import numpy as np
 import os
 import rospy # ROS Python interface
-from std_msgs.msg import Int16MultiArray # ROS message for mics
-from std_msgs.msg import Bool
+from std_msgs.msg import Int16MultiArray, Bool # ROS message for mics
 import matplotlib.pyplot as plt
+import time
 
 # testing purposes
 import wave, struct
@@ -25,15 +25,21 @@ class ProcessAudio(object):
         self.subscriber = rospy.Subscriber(
             self.topic_base_name + "/sensors/mics", Int16MultiArray, self.audio_cb, tcp_nodelay=True
         )
-        # self.audio_publisher = rospy.Publisher(
-        #     self.topic_base_name + "/gpt_speech/process_speech", Int16MultiArray, queue_size=0
-        # )
+        self.whisper_publisher = rospy.Publisher(
+            self.topic_base_name + "/gpt_speech/process_whisper", Bool, queue_size=0
+        )
+        self.subscriber_check_gtts = rospy.Subscriber(
+            self.topic_base_name + "/control/stream", Int16MultiArray, self.check_gtts_cb, tcp_nodelay=True
+        )
+        self.start_check_time = time.time()
+        self.check_processing_audio = False
         # self.check_publisher = rospy.Publisher(
         #     self.topic_base_name + "/gpt_speech/check_speech", Bool, queue_size=0
         # )
         self.audio_store = Int16MultiArray()
         self.check_audio = Bool()
-
+        self.check_audio.data = False
+        self.process_whisper_msg = Bool()
         # processed sound
         self.detected_sound = np.zeros((0,1), 'uint16')
         self.zcr_frame = np.zeros((0,1), 'uint16')
@@ -42,6 +48,9 @@ class ProcessAudio(object):
         self.record = False
         self.stop_record = 0
         self.processing = False
+
+    def check_gtts_cb(self, msg):
+        self.start_check_time = time.time()
 
     def calc_ZCR(self, signal):
         ZCR = 0
@@ -54,7 +63,7 @@ class ProcessAudio(object):
         data = np.asarray(msg.data)
         self.mic_data = np.transpose(data.reshape((4, 500)))
         self.check_audio.data = False
-        if not self.micbuf is None:
+        if ((self.check_processing_audio == False) and (not self.micbuf is None) and (time.time() > (self.start_check_time + 1))):
 
 			# append mic data to store
             self.micbuf = np.concatenate((self.micbuf, self.mic_data))
@@ -69,7 +78,10 @@ class ProcessAudio(object):
             
             if self.startCheck is True and not self.outbuf is None:
                 # get audio from left ear of MiRo
-                detect_sound = np.reshape(self.outbuf[:,[1]], (-1))
+                detect_sound = np.reshape(self.outbuf[:,[3]], (-1))
+                # detect_sound = np.add(np.reshape(self.outbuf[:,[0]], (-1)), np.reshape(self.outbuf[:,[1]], (-1)))
+                for i in range(0,2):
+                    detect_sound = np.add(detect_sound, np.reshape(self.outbuf[:,[i]], (-1)))
 
                 # process audio
                 outbuf = np.zeros((int(SAMPLE_COUNT), 0), 'uint16')
@@ -86,10 +98,10 @@ class ProcessAudio(object):
             if len(self.zcr_frame) >= 10000:
                 zcr_value = self.calc_ZCR(self.zcr_frame)
                 self.zcr_frame = np.zeros((0,1), 'uint16')
-                if zcr_value >= 100 and zcr_value <= 1000:
+                print(zcr_value)
+                if zcr_value >= 150 and zcr_value <= 1000:
                     self.record = True
                     self.stop_record = 0
-                    print("RECORDING NOW")
                 else:
                     self.stop_record += 1
             
@@ -113,6 +125,7 @@ class ProcessAudio(object):
     def record_audio(self):
         outfilename = 'audio_files/testing.wav'
         if self.processing is True and (not os.path.exists(outfilename)):
+            self.check_processing_audio = True
         # if self.processing is True:
             # self.audio_store.data = self.to_transcribe
             # self.audio_publisher.publish(self.audio_store)
@@ -129,7 +142,12 @@ class ProcessAudio(object):
             file.close()
             print("DONE")
             self.processing = False
-
+        if os.path.exists(outfilename):
+            self.process_whisper_msg.data = True
+        else:
+            self.process_whisper_msg.data = False
+            self.check_processing_audio = False
+        self.whisper_publisher.publish(self.process_whisper_msg)
 if __name__ == "__main__":
     main = ProcessAudio()
     i = 0

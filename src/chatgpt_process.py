@@ -34,6 +34,7 @@ class ChatGPTNode:
         rmsg = std_msgs.msg.String()
         rmsg.data = reply
 
+        print(rmsg)
         self.pub_response.publish(rmsg)
 
 
