@@ -2,7 +2,7 @@ from gtts import gTTS
 import rospy
 import os
 import std_msgs.msg
-from std_msgs.msg import UInt8MultiArray, UInt16MultiArray, Int16MultiArray
+from std_msgs.msg import Int16MultiArray
 from io import BytesIO
 from pydub import AudioSegment
 import numpy as np

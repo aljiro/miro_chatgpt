@@ -36,7 +36,7 @@ class SaveAudio():
     def save_audio_file(self):
         outfilename = 'audio_files/testing.wav'
         while not rospy.core.is_shutdown():
-            if self.check_audio is True:
+            if (self.check_audio is True) and (not os.path.exists(outfilename)):
                 # start saving file
                 file = wave.open(outfilename, 'wb')
                 file.setframerate(20000)
