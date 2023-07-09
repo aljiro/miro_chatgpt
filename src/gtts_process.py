@@ -17,7 +17,6 @@ class gTTSNode:
                           std_msgs.msg.String, self.response_callback, queue_size=1, tcp_nodelay=True)
         # Control
         self.pub_stream = rospy.Publisher(topic_base_name + "/control/stream", Int16MultiArray, queue_size=0)
-
         self.data = []
 
     def response_callback( self, msg ):

@@ -2,25 +2,43 @@
 import numpy as np
 import os
 import rospy # ROS Python interface
-from std_msgs.msg import Int16MultiArray, Bool # ROS message for mics
-import matplotlib.pyplot as plt
+from std_msgs.msg import Int16MultiArray, Bool, String # ROS message for mics
 import time
+import pvporcupine
 
 # testing purposes
 import wave, struct
 
 SAMPLE_COUNT = 640
-SAMPLING_TIME = 29 # in terms of seconds
+SAMPLING_TIME = 7 # in terms of seconds
 
 class ProcessAudio(object):
 
     # update the detected words with the messages being published
     def __init__(self):
+        
+        # init for the processing audio
         rospy.init_node("process_audio")
-        self.mic_data = np.zeros((0, 4), 'uint16')
-        self.micbuf = np.zeros((0, 4), 'uint16')
-        self.outbuf = None
-        self.startCheck = False
+        self.mic_data = np.zeros((0, 4), 'uint16')      # the raw sound data obtained from the MiRo's message.
+        self.micbuf = np.zeros((0, 4), 'uint16')        # the raw sound data that is has been recorded for use. This has been recorded and passes to be process when it has enough sample count.
+        self.detected_sound = np.zeros((0,1), 'uint16') # the detected sound throughout.
+        self.recorded_sound = np.zeros((0,1), 'uint16') # to store the first few seconds of sound to be init when hearing a response.
+        self.to_record = np.zeros((0,1), 'uint16')      # the frame which is recorded for use in chatgpt.
+        self.zcr_frame = np.zeros((0,1), 'uint16')      # zero crossing rate frame.
+        self.process_whisper_msg = Bool()               # message used to let whisper know when to start processing.
+        self.gesture_msg = String()                     # gestures message
+        self.stop_record = time.time() - 5              # the time when the robot should stop recording. The robot will stop recording 3 seconds after it hears "Hey MiRo" and the user stops speaking after.
+        self.start_check_time = time.time() + 1.5       # the time when the robot itself is speaking.
+
+        # porcupine access
+        self.access_key = "B+WsqPgG7cJtnh7HwOCw4S264Vx0JncHljCKCbp+euikQIW3Ufqhag=="
+        # new_path = "../pkgs/mdk-210921/catkin_ws/src/speech_recognition_porcupine/src"
+        # os.chdir(new_path)
+        self.handle = pvporcupine.create(access_key=self.access_key, 
+									keywords=['hey google'],
+									keyword_paths=['processed_data/Hey-Miro_en_linux_v2_2_0.ppn'])
+
+        # ros subcribers and publishers to be used
         self.topic_base_name = "/" + os.getenv("MIRO_ROBOT_NAME")
         self.subscriber = rospy.Subscriber(
             self.topic_base_name + "/sensors/mics", Int16MultiArray, self.audio_cb, tcp_nodelay=True
@@ -31,125 +49,109 @@ class ProcessAudio(object):
         self.subscriber_check_gtts = rospy.Subscriber(
             self.topic_base_name + "/control/stream", Int16MultiArray, self.check_gtts_cb, tcp_nodelay=True
         )
-        self.start_check_time = time.time()
-        self.check_processing_audio = False
-        # self.check_publisher = rospy.Publisher(
-        #     self.topic_base_name + "/gpt_speech/check_speech", Bool, queue_size=0
-        # )
-        self.audio_store = Int16MultiArray()
-        self.check_audio = Bool()
-        self.check_audio.data = False
-        self.process_whisper_msg = Bool()
-        # processed sound
-        self.detected_sound = np.zeros((0,1), 'uint16')
-        self.zcr_frame = np.zeros((0,1), 'uint16')
-        self.to_transcribe = np.zeros((0,1), 'uint16')
-        self.start_processing = False   # check whether a new audio sample is to be processed
-        self.record = False
-        self.stop_record = 0
-        self.processing = False
+        self.pub_gestures = rospy.Publisher(
+            self.topic_base_name + "/gpt_speech/actions", String, queue_size=0
+        )
+        self.pub_response = rospy.Publisher(self.topic_base_name + "/gpt_speech/prompt_response", String, queue_size=0)
 
+    # callback function that updates the time when it sees a message be published
     def check_gtts_cb(self, msg):
+        self.gesture_msg.data = "normal"
+        self.pub_gestures.publish(self.gesture_msg)
         self.start_check_time = time.time()
 
+    # zero crossing rate calculation
     def calc_ZCR(self, signal):
         ZCR = 0
         for k in range(1, len(signal)):
             ZCR += 0.5 * abs(np.sign(signal[k]) - np.sign(signal[k - 1]))
         return ZCR
     
+    # process audio for wake word and the recording to be sent for speech to text
     def audio_cb(self, msg):
-		# reshape into 4 x 500 array
-        data = np.asarray(msg.data)
-        self.mic_data = np.transpose(data.reshape((4, 500)))
-        self.check_audio.data = False
-        if ((self.check_processing_audio == False) and (not self.micbuf is None) and (time.time() > (self.start_check_time + 1))):
+        # start recording only if the miro is not speaking
+        if time.time() - self.start_check_time > 1.5:
+            # reshape into 4 x 500 array
+            data = np.asarray(msg.data)
+            self.mic_data = np.transpose(data.reshape((4, 500)))
+            self.record = False
 
-			# append mic data to store
-            self.micbuf = np.concatenate((self.micbuf, self.mic_data))
+            if not self.micbuf is None:
+                self.micbuf = np.concatenate((self.micbuf, self.mic_data))
+                
+                if self.micbuf.shape[0] >= SAMPLE_COUNT:
+                    outbuf = self.micbuf[:SAMPLE_COUNT]
+                    self.micbuf = self.micbuf[SAMPLE_COUNT:]
+                    
+                    # get audio from left ear of Miro
+                    detect_sound = np.reshape(outbuf[:, [1]], (-1))
+                    for i in range(1,3):
+                        detect_sound = np.add(detect_sound, np.reshape(outbuf[:,[i]], (-1)))
 
-			# finished recording?
-            if self.micbuf.shape[0] >= SAMPLE_COUNT:
+                    # downsample to sampling rate accepted by picovoice
+                    outbuf_dwnsample = np.zeros((int(SAMPLE_COUNT / 1.25), 0), 'uint16')
+                    i = np.arange(0, SAMPLE_COUNT, 1.25)
+                    j = np.arange(0, SAMPLE_COUNT)
+                    x = np.interp(i, j, detect_sound[:])
+                    outbuf_dwnsample = np.concatenate((outbuf_dwnsample, x[:, np.newaxis]), axis=1)
+                    outbuf_dwnsample = outbuf_dwnsample.astype(int)
+                    outbuf_dwnsample = np.reshape(outbuf_dwnsample[:, [0]], (-1))
+                    if len(self.recorded_sound) < 20000:
+                        self.recorded_sound = np.append(self.recorded_sound, detect_sound)
+                    else:
+                        self.recorded_sound = np.append(self.recorded_sound[20000:], detect_sound)
+                    
+                    # check for any wake words
+                    keyword_index = self.handle.process(outbuf_dwnsample)
 
-				# start updating records
-                self.outbuf = self.micbuf[:SAMPLE_COUNT]
-                self.micbuf = self.micbuf[SAMPLE_COUNT:]
-                self.startCheck = True 	# check if micbuf is full since the used audio will be deleted from mic buf
-            
-            if self.startCheck is True and not self.outbuf is None:
-                # get audio from left ear of MiRo
-                detect_sound = np.reshape(self.outbuf[:,[3]], (-1))
-                # detect_sound = np.add(np.reshape(self.outbuf[:,[0]], (-1)), np.reshape(self.outbuf[:,[1]], (-1)))
-                for i in range(0,2):
-                    detect_sound = np.add(detect_sound, np.reshape(self.outbuf[:,[i]], (-1)))
+                    self.print = keyword_index
+                    # if the wake word is "Hey MiRo" start recording
+                    if keyword_index != -1:
+                        print("Detected: Hey Miro")
+                        self.gesture_msg.data = "notice"
+                        self.pub_gestures.publish(self.gesture_msg)
+                        rmsg = String()
+                        rmsg.data = "Hey!"
+                        self.pub_response.publish(rmsg)
+                        self.stop_record = time.time()
+                    if (time.time() - self.stop_record < SAMPLING_TIME):
+                        self.gesture_msg.data = "listening"
+                        self.pub_gestures.publish(self.gesture_msg)
+        
+                        self.record = True
+                        self.detected_sound = np.append(self.detected_sound, self.recorded_sound)
+                        self.recorded_sound = np.zeros((0,1), 'uint16')
+                    else:
+                        if len(self.detected_sound) > 0:
+                            self.to_record = self.detected_sound
+                            print(len(self.to_record))
+                            self.detected_sound = np.zeros((0,1), 'uint16')
 
-                # process audio
-                outbuf = np.zeros((int(SAMPLE_COUNT), 0), 'uint16')
-                i = np.arange(0, SAMPLE_COUNT, 1)
-                j = np.arange(0, SAMPLE_COUNT)
-                x = np.interp(i, j, detect_sound[:])
-                outbuf = np.concatenate((outbuf, x[:, np.newaxis]), axis=1)
-                outbuf = outbuf.astype(int)
-                outbuf = np.reshape(outbuf[:, [0]], (-1))
-                self.startCheck = False
-                self.detected_sound = np.append(self.detected_sound, outbuf)
-                self.zcr_frame = np.append(self.zcr_frame, outbuf)
-
-            if len(self.zcr_frame) >= 10000:
-                zcr_value = self.calc_ZCR(self.zcr_frame)
-                self.zcr_frame = np.zeros((0,1), 'uint16')
-                print(zcr_value)
-                if zcr_value >= 150 and zcr_value <= 1000:
-                    self.record = True
-                    self.stop_record = 0
-                else:
-                    self.stop_record += 1
-            
-            # reset if false
-            if (self.record == False) and (len(self.detected_sound) > 10000):
-                self.detected_sound = self.detected_sound[len(self.detected_sound) - 10000:len(self.detected_sound)]
-
-            # renew data
-            if ((len(self.detected_sound) >= (20000 * SAMPLING_TIME)) or (self.stop_record >= 4)) and (self.record == True):
-                if self.processing == False:
-                    self.to_transcribe = self.detected_sound
-                    self.processing = True
-                self.check_audio.data = True
-
-                # testing
-                self.record = False
-                self.detected_sound = np.zeros((0,1), 'uint16')
-
-            # self.check_publisher.publish(self.check_audio)
-            
+    # to be looped. the method is used for saving audio files and publishing message to whisper that it is ready to be processed.
+    # To-Do: write to Bytes.io
     def record_audio(self):
         outfilename = 'audio_files/testing.wav'
-        if self.processing is True and (not os.path.exists(outfilename)):
-            self.check_processing_audio = True
-        # if self.processing is True:
-            # self.audio_store.data = self.to_transcribe
-            # self.audio_publisher.publish(self.audio_store)
-            # print("SENDING")
-            
+        if len(self.to_record) > 0:
             outfilename = 'audio_files/testing.wav'
-            file = wave.open(outfilename, 'wb')
-            file.setframerate(20000)
-            file.setsampwidth(2)
-            print("Starting to write/re-write new audio file of sample length " + str(len(self.to_transcribe)))
-            file.setnchannels(1)
-            for s in self.to_transcribe:
-                file.writeframes(struct.pack('<h', s))
-            file.close()
-            print("DONE")
-            self.processing = False
+            with wave.open(outfilename, 'wb') as file:
+                file.setframerate(20000)
+                file.setsampwidth(2)
+                print("Starting to write/re-write new audio file of sample length " + str(len(self.to_record)))
+                file.setnchannels(1)
+                for s in self.to_record:
+                    file.writeframes(struct.pack('<h', s))
+                file.close()
+            print("Writing Complete!")
+            self.to_record = np.zeros((0,1), 'uint16')
         if os.path.exists(outfilename):
+            self.gesture_msg.data = "working"
+            self.pub_gestures.publish(self.gesture_msg)
             self.process_whisper_msg.data = True
         else:
             self.process_whisper_msg.data = False
-            self.check_processing_audio = False
         self.whisper_publisher.publish(self.process_whisper_msg)
+
 if __name__ == "__main__":
     main = ProcessAudio()
-    i = 0
     while not rospy.core.is_shutdown():
         main.record_audio()

@@ -40,6 +40,7 @@ class TextPrompt():
             if self.read >= 1:
                 if os.path.exists(outfilename) and self.process_whisper == True:
                     rospy.sleep(0.5)
+                    print("SENDING")
                     audio_file= open(outfilename, "rb")
                     transcript = openai.Audio.transcribe("whisper-1", audio_file)
                     self.message.data = transcript.text
