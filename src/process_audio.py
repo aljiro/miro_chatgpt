@@ -10,7 +10,7 @@ import pvporcupine
 import wave, struct
 
 SAMPLE_COUNT = 640
-SAMPLING_TIME = 7 # in terms of seconds
+SAMPLING_TIME = 10 # in terms of seconds
 
 class ProcessAudio(object):
 
@@ -139,7 +139,10 @@ class ProcessAudio(object):
                 print("Starting to write/re-write new audio file of sample length " + str(len(self.to_record)))
                 file.setnchannels(1)
                 for s in self.to_record:
-                    file.writeframes(struct.pack('<h', s))
+                    try:
+                        file.writeframes(struct.pack('<h', s))
+                    except struct.error as err:
+                        print(err)
                 file.close()
             print("Writing Complete!")
             self.to_record = np.zeros((0,1), 'uint16')
